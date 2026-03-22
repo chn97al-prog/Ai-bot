@@ -6,14 +6,8 @@ from flask import Flask, request
 
 # ================== ENV ==================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-if not BOT_TOKEN:
-    raise Exception("BOT_TOKEN is missing")
-
-if not OPENAI_API_KEY:
-    raise Exception("OPENAI_API_KEY is missing")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # ================== LOGGING ==================
 
@@ -27,18 +21,26 @@ logging.basicConfig(
 app = Flask(__name__)
 user_state = {}
 
-# ================== TELEGRAM ==================
+# ================== HELPERS ==================
 
 def send_message(chat_id, text):
+    if not BOT_TOKEN:
+        logging.error("BOT_TOKEN missing")
+        return
+
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
     except Exception as e:
         logging.error("send_message error: %s", e)
 
 def send_photo(chat_id, photo_url):
+    if not BOT_TOKEN:
+        logging.error("BOT_TOKEN missing")
+        return
+
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
         requests.post(url, json={"chat_id": chat_id, "photo": photo_url}, timeout=20)
     except Exception as e:
         logging.error("send_photo error: %s", e)
@@ -46,6 +48,9 @@ def send_photo(chat_id, photo_url):
 # ================== OPENAI CHAT ==================
 
 def ask_ai(prompt):
+    if not OPENAI_API_KEY:
+        return "❌ OPENAI_API_KEY غير مضاف في Railway"
+
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
@@ -56,21 +61,25 @@ def ask_ai(prompt):
         "messages": [{"role": "user", "content": prompt}]
     }
 
-    res = requests.post(url, headers=headers, json=data, timeout=20)
+    try:
+        res = requests.post(url, headers=headers, json=data, timeout=20)
+        if res.status_code != 200:
+            return f"❌ خطأ: {res.text}"
 
-    if res.status_code != 200:
-        return f"❌ خطأ: {res.text}"
+        return res.json()["choices"][0]["message"]["content"]
 
-    result = res.json()
-    return result["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"❌ Exception: {e}"
 
 # ================== IMAGE ==================
 
 def generate_image(prompt):
+    if not OPENAI_API_KEY:
+        raise Exception("OPENAI_API_KEY missing")
+
     url = "https://api.openai.com/v1/images/generations"
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+
     data = {
         "model": "gpt-image-1",
         "prompt": prompt,
@@ -82,48 +91,7 @@ def generate_image(prompt):
     if res.status_code != 200:
         raise Exception(res.text)
 
-    result = res.json()
-    return result["data"][0]["url"]
-
-# ================== DOWNLOAD ==================
-
-def download_telegram_file(file_id):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile"
-    res = requests.get(url, params={"file_id": file_id}).json()
-
-    file_path = res["result"]["file_path"]
-    file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-
-    file_data = requests.get(file_url)
-
-    file_name = f"{uuid.uuid4().hex}.png"
-    with open(file_name, "wb") as f:
-        f.write(file_data.content)
-
-    return file_name
-
-# ================== EDIT IMAGE ==================
-
-def edit_image(image_path, prompt):
-    url = "https://api.openai.com/v1/images/edits"
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
-
-    with open(image_path, "rb") as f:
-        files = {"image": f}
-        data = {
-            "model": "gpt-image-1",
-            "prompt": prompt
-        }
-
-        res = requests.post(url, headers=headers, files=files, data=data)
-
-    if res.status_code != 200:
-        raise Exception(res.text)
-
-    result = res.json()
-    return result["data"][0]["url"]
+    return res.json()["data"][0]["url"]
 
 # ================== WEBHOOK ==================
 
@@ -131,7 +99,6 @@ def edit_image(image_path, prompt):
 def webhook():
     try:
         data = request.get_json()
-        logging.info("Incoming update: %s", data)
 
         if not data or "message" not in data:
             return "ok", 200
@@ -147,7 +114,7 @@ def webhook():
 
         if text == "/start":
             user_state[chat_id] = "chat"
-            send_message(chat_id, "👋 أهلاً بك\n\n/chat\n/generate\n/edit")
+            send_message(chat_id, "👋 أهلاً بك")
             return "ok", 200
 
         elif text == "/chat":
@@ -160,28 +127,7 @@ def webhook():
             send_message(chat_id, "🎨 أرسل وصف الصورة")
             return "ok", 200
 
-        elif text == "/edit":
-            user_state[chat_id] = "edit"
-            send_message(chat_id, "🖼️ أرسل صورة مع وصف")
-            return "ok", 200
-
-        # ===== Edit Image =====
-
-        if photo and state == "edit":
-            send_message(chat_id, "⏳ جاري التعديل...")
-            try:
-                file_id = photo[-1]["file_id"]
-                image_path = download_telegram_file(file_id)
-                prompt = msg.get("caption", "Edit this image")
-                edited_url = edit_image(image_path, prompt)
-                send_photo(chat_id, edited_url)
-                os.remove(image_path)
-            except Exception as e:
-                send_message(chat_id, f"❌ خطأ: {e}")
-
-            return "ok", 200
-
-        # ===== Generate Image =====
+        # ===== Generate =====
 
         elif text and state == "generate":
             send_message(chat_id, "⏳ جاري إنشاء الصورة...")
@@ -189,8 +135,7 @@ def webhook():
                 img = generate_image(text)
                 send_photo(chat_id, img)
             except Exception as e:
-                send_message(chat_id, f"❌ خطأ: {e}")
-
+                send_message(chat_id, f"❌ {e}")
             return "ok", 200
 
         # ===== Chat =====
@@ -204,7 +149,7 @@ def webhook():
 
     except Exception as e:
         logging.error("WEBHOOK ERROR: %s", e)
-        return "error", 500
+        return "error", 200
 
 # ================== HOME ==================
 
