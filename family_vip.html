@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+<meta charset="UTF-8">
+<title>موقع شجرة العائلة VIP</title>
+
+<!-- مكتبات -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/treant-js/1.0/Treant.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/treant-js/1.0/vendor/raphael.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/treant-js/1.0/Treant.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/save-svg-as-png/1.4.17/saveSvgAsPng.min.js"></script>
+
+<style>
+body {
+  font-family: Arial;
+  direction: rtl;
+  text-align: center;
+  padding: 20px;
+  background: #f0f0f0;
+}
+input, button {
+  padding: 10px;
+  margin: 5px;
+  font-size: 14px;
+}
+#treeContainer {
+  margin-top: 30px;
+  overflow-x: auto;
+}
+#tree {
+  display: inline-block;
+  background: #fff;
+  border: 1px solid #ccc;
+  padding: 20px;
+}
+</style>
+</head>
+<body>
+
+<h2>موقع شجرة العائلة VIP</h2>
+
+<p>أضف الأب والأبناء مفصولة بفواصل:</p>
+
+<input id="parentName" placeholder="اسم الأب">
+<input id="childNames" placeholder="الأبناء مفصولة بفواصل">
+<button onclick="addRelation()">أضف</button>
+<button onclick="renderTree()">عرض الشجرة</button>
+<button onclick="downloadTree()">تحميل صورة</button>
+
+<div id="treeContainer">
+  <div id="tree"></div>
+</div>
+
+<script>
+let relations = [];
+
+// إضافة الأب + الأبناء
+function addRelation() {
+  let parent = document.getElementById("parentName").value.trim();
+  let children = document.getElementById("childNames").value.trim();
+  if(!parent || !children) return alert("اكتب الأب والأبناء!");
+  
+  relations.push({ parent, children: children.split(",").map(x=>x.trim()).filter(x=>x!=="") });
+  document.getElementById("parentName").value = "";
+  document.getElementById("childNames").value = "";
+  alert("تمت الإضافة!");
+}
+
+// رسم الشجرة
+function renderTree() {
+  if(relations.length===0) return alert("أضف بيانات أولاً!");
+  
+  let nodes = {};
+  
+  relations.forEach(r=>{
+    if(!nodes[r.parent]) nodes[r.parent] = { text:{name:r.parent}, children:[] };
+    r.children.forEach(c=>{
+      let childNode = { text:{name:c}, children:[] };
+      nodes[r.parent].children.push(childNode);
+      nodes[c] = childNode;
+    });
+  });
+
+  let chart_config = [{
+    chart:{container:"#tree"},
+    nodeStructure: nodes[relations[0].parent]
+  }];
+
+  new Treant(chart_config);
+}
+
+// تحميل الشجرة كصورة PNG
+function downloadTree() {
+  let svg = document.querySelector("#tree svg");
+  if(!svg) return alert("الشجرة لم تُرسم بعد!");
+  
+  saveSvgAsPng(svg, "family_tree.png", { scale: 3, backgroundColor: "#fff" });
+}
+</script>
+
+</body>
+</html>
